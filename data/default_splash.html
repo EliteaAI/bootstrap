@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0px;
+      }
+      body {
+        margin: 0px;
+        color: rgb(169, 183, 193);
+        font-family: Montserrat, Roboto, Arial, sans-serif;
+        font-weight: 400;
+        font-size: 1rem;
+        line-height: 1.5;
+        background-color: rgb(14, 19, 29);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #container {
+        border: 1px solid #ccc;
+        border-radius: 16px;
+        padding: 5%;
+        background-color: rgb(9, 12, 23);
+      }
+    </style>
+    <title>Pylon - Maintenance</title>
+  </head>
+  <body>
+    <div id="container">
+      <span>Platform is under maintenance, please wait...</span>
+      <br>
+      <span>This page will refresh in: <span id="counter">120</span> seconds</span>
+    </div>
+    <script>
+      let count = 120;
+      const counter = document.getElementById("counter");
+      const timer = setInterval(() => {
+        count--;
+        counter.textContent = count;
+        if (count <= 0) {
+          clearInterval(timer);
+          window.location.reload();
+        }
+      }, 1000);
+    </script>
+  </body>
+</html>
