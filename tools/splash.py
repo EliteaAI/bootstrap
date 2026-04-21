@@ -94,7 +94,7 @@ def maintenance_splash_hook(router, environ, _start_response):  # pylint: disabl
     if user_id is not None:
         user_roles = context.rpc_manager.timeout(15).auth_get_user_roles(user_id, "administration")
         #
-        if "admin" in user_roles:
+        if "admin" in user_roles or "super_admin" in user_roles:
             return None
     #
     return maintenance_splash_app
