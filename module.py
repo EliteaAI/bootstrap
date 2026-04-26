@@ -306,7 +306,9 @@ class Module(module.ModuleModel):  # pylint: disable=R0902
             while isinstance(config, list):
                 config = config[0]
             #
-            if config.get("type", "unknown") == "repo_depot":
+            resolver_type = config.get("type", "unknown")
+            #
+            if resolver_type == "repo_depot":
                 session = requests.Session()
                 session.headers.update({
                     "User-Agent": "PythonMachineryEliteAClient",
@@ -326,9 +328,56 @@ class Module(module.ModuleModel):  # pylint: disable=R0902
                     repo_url_base = f"{repo_url_base}/public"
                 #
                 target_url = f"{repo_url_base}/depot/{release}/bundles/{name}/data"
+            #
+            elif resolver_type == "elitea_github":
+                remaps = {
+                    "EliteAUI.zip": {
+                        "repo": "EliteaUI",
+                        "release": {
+                            "main": "latest",
+                        },
+                    },
+                    "maintenance.html": {
+                        "repo": "Maintenance-UI",
+                        "release": {
+                            "main": "latest",
+                        },
+                    },
+                }
+                #
+                target_remap = remaps.get(name, {})
+                release_remap = target_remap.get("release", {})
+                #
+                release_owner = "EliteaAI"
+                release_repo = target_remap.get("repo", "bundles")
+                #
+                release = config.get("release", "main")
+                release = release_remap.get(release, release)
+                #
+                headers = {
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "Accept": "application/json",
+                }
+                #
+                response = requests.get(
+                    f"https://api.github.com/repos/{release_owner}/{release_repo}/releases",
+                    headers=headers,
+                )
+                response.raise_for_status()
+                releases = response.json()
+                #
+                for release_info in releases:
+                    if release_info["name"] == release:
+                        headers["Accept"] = "application/octet-stream"
+                        #
+                        session = requests.Session()
+                        session.headers.update(headers)
+                        #
+                        target_url = release_info["assets"][0]["url"]
+                        break
         #
         if session is None:
-            raise RuntimeError("RepoResolver is not for depot")
+            raise RuntimeError("RepoResolver is not for supported depot")
         #
         install_needed_callback = kwargs.get("install_needed", None)
         update_needed_callback = kwargs.get("update_needed", None)
