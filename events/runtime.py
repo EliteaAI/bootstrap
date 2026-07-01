@@ -255,6 +255,11 @@ class Event:  # pylint: disable=R0903,E1101
             log.info("All reloads done")
         #
         if payload.get("restart", True):
+            # Signal shutdown starting (for lifecycle tracking)
+            self.context.event_manager.fire_event(
+                "pylon_stopping", {"pylon_id": self.context.id}
+            )
+            #
             try:
                 wait_for_tasks(self)
             except:  # pylint: disable=W0702
