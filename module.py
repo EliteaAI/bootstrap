@@ -39,6 +39,11 @@ from .tools.event import RuntimeAnnoucer
 from .tools.logs import LocalListLogHandler
 from .tools.signal import signal_sigusr2
 from .tools.tasks import wait_for_tasks
+from .tools.maintenance import (
+    is_maintenance_active as _is_maintenance_active,
+    set_task_approvers,
+    reject_approver,
+)
 from .tools import mesh
 
 
@@ -268,6 +273,21 @@ class Module(module.ModuleModel):  # pylint: disable=R0902
         #
         self.repo_resolver = self._make_resolver()
         self.repo_resolver.init()
+
+    def ready(self):
+        """ Ready callback: re-arm task-approvers if splash is on. """
+        if self.descriptor.state.get("splash_enabled", False):
+            log.info("Maintenance splash is on at startup — re-arming task approvers")
+            try:
+                set_task_approvers(self, reject_approver)
+            except:  # pylint: disable=W0702
+                log.exception("Failed to re-arm task approvers on ready")
+
+    def is_maintenance_active(self):
+        """ Public helper for other plugins:
+            `this.for_module('bootstrap').module.is_maintenance_active()`
+        """
+        return _is_maintenance_active(self.context.module_manager)
 
     def unready(self):
         """ Un-ready callback """

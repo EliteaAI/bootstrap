@@ -37,6 +37,14 @@ def maintenance_splash_hook(router, environ, _start_response):  # pylint: disabl
     for endpoint in ["healthz", "livez", "readyz"]:
         if source_uri.startswith(f"/{endpoint}") and f"/{endpoint}/" in router.map:
             return None
+    # Allow auth flow so admins can sign in while maintenance is active
+    auth_allowlist = this.descriptor.config.get(
+        "splash_auth_allowlist",
+        ["/forward-auth/", "/auth/", "/api/v1/auth/"],
+    )
+    for prefix in auth_allowlist:
+        if source_uri.startswith(prefix):
+            return None
     #
     source_uri = f'{context.url_prefix}{source_uri}'
     #
@@ -94,7 +102,7 @@ def maintenance_splash_hook(router, environ, _start_response):  # pylint: disabl
     if user_id is not None:
         user_roles = context.rpc_manager.timeout(15).auth_get_user_roles(user_id, "administration")
         #
-        if "admin" in user_roles or "super_admin" in user_roles:
+        if "admin" in user_roles:
             return None
     #
     return maintenance_splash_app
