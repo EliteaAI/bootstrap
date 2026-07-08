@@ -21,6 +21,8 @@ import time
 
 from pylon.core.tools import log  # pylint: disable=E0611,E0401
 
+from .task_targets import TASK_TARGETS
+
 
 def wait_for_tasks(self):  # pylint: disable=R0912,R0914,R0915
     """ Wait for running tasks to stop """
@@ -51,49 +53,9 @@ def wait_for_tasks(self):  # pylint: disable=R0912,R0914,R0915
     #
     log.info("Waiting for tasks to stop")
     #
-    # Targets: TaskNodes and TaskQueues inside plugins/modules
+    # Targets: TaskNodes and TaskQueues inside plugins/modules (see task_targets.py)
     #
-    targets = {
-        "indexer_worker": {
-            "queues": [
-                {
-                    "queue": "index_task_queue",
-                    "tasks": [
-                        "indexer_index",
-                        "indexer_index_stream",
-                    ],
-                },
-            ],
-            "nodes": [
-                "agent_task_node",
-                "index_task_node",
-            ],
-        },
-        "worker_core": {
-            "queues": [
-                {
-                    "queue": "task_queue_preload",
-                    "tasks": [
-                        "invoke_model",
-                    ],
-                },
-                {
-                    "queue": "task_queue",
-                    "tasks": [
-                        "indexer_ask",
-                        "indexer_ask_stream",
-                        "indexer_search",
-                        "indexer_deduplicate",
-                        "indexer_delete",
-                    ],
-                },
-            ],
-            "nodes": [
-                "task_node_light",
-                "task_node_heavy",
-            ],
-        },
-    }
+    targets = TASK_TARGETS
     #
     # Commons
     #

@@ -19,74 +19,7 @@
 
 from pylon.core.tools import log  # pylint: disable=E0611,E0401
 
-
-# Same shape as bootstrap/tools/tasks.py::wait_for_tasks — kept in one place
-# because both need to know which plugins host TaskNode/TaskQueue instances.
-_TASK_TARGETS = {
-    "indexer_worker": {
-        "queues": [
-            {
-                "queue": "index_task_queue",
-                "tasks": [
-                    "indexer_index",
-                    "indexer_index_stream",
-                ],
-            },
-        ],
-        "nodes": [
-            "agent_task_node",
-            "index_task_node",
-        ],
-    },
-    "worker_core": {
-        "queues": [
-            {
-                "queue": "task_queue_preload",
-                "tasks": [
-                    "invoke_model",
-                ],
-            },
-            {
-                "queue": "task_queue",
-                "tasks": [
-                    "indexer_ask",
-                    "indexer_ask_stream",
-                    "indexer_search",
-                    "indexer_deduplicate",
-                    "indexer_delete",
-                ],
-            },
-        ],
-        "nodes": [
-            "task_node_light",
-            "task_node_heavy",
-        ],
-    },
-    # pylon_main-hosted TaskNodes. These accept agent/pipeline predicts and
-    # index dispatches submitted by the main pylon itself, so they must also
-    # be silenced when maintenance is on.
-    "elitea_core": {
-        "queues": [],
-        "nodes": [
-            "task_node",
-        ],
-    },
-    "worker_client": {
-        "queues": [],
-        "nodes": [
-            "task_node",
-        ],
-    },
-    # `admin.task_node` is attached at runtime via @web.init in
-    # plugins/admin/methods/tasks.py — it may or may not be present depending
-    # on load order, so _iter_standalone_nodes gates on hasattr().
-    "admin": {
-        "queues": [],
-        "nodes": [
-            "task_node",
-        ],
-    },
-}
+from .task_targets import TASK_TARGETS
 
 
 def reject_approver(*_args, **_kwargs):
@@ -95,7 +28,7 @@ def reject_approver(*_args, **_kwargs):
 
 def _iter_queue_nodes(module_manager):
     """ Yield (label, task_node, queue_or_none, task_names) for each queue-backed node. """
-    for plugin_name, plugin_target in _TASK_TARGETS.items():
+    for plugin_name, plugin_target in TASK_TARGETS.items():
         if plugin_name not in module_manager.modules:
             continue
         #
@@ -122,7 +55,7 @@ def _iter_queue_nodes(module_manager):
 
 def _iter_standalone_nodes(module_manager):
     """ Yield (label, task_node) for each standalone TaskNode. """
-    for plugin_name, plugin_target in _TASK_TARGETS.items():
+    for plugin_name, plugin_target in TASK_TARGETS.items():
         if plugin_name not in module_manager.modules:
             continue
         #
