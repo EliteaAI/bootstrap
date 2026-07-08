@@ -17,10 +17,12 @@
 
 """ Splash """
 
+from urllib.parse import urlsplit, urlunsplit
+
 import flask  # pylint: disable=E0401
 
 from pylon.core.tools.context import Context as Holder  # pylint: disable=E0611,E0401
-from pylon.core.tools import config  # pylint: disable=E0611,E0401,W0611
+from pylon.core.tools import log, config  # pylint: disable=E0611,E0401,W0611
 
 from tools import context, this  # pylint: disable=E0401
 
@@ -36,6 +38,14 @@ def maintenance_splash_hook(router, environ, _start_response):  # pylint: disabl
     #
     for endpoint in ["healthz", "livez", "readyz"]:
         if source_uri.startswith(f"/{endpoint}") and f"/{endpoint}/" in router.map:
+            return None
+    # Allow auth flow so admins can sign in while maintenance is active
+    auth_allowlist = this.descriptor.config.get(
+        "splash_auth_allowlist",
+        ["/forward-auth/", "/auth/", "/api/v1/auth/"],
+    )
+    for prefix in auth_allowlist:
+        if source_uri.startswith(prefix):
             return None
     #
     source_uri = f'{context.url_prefix}{source_uri}'
@@ -59,6 +69,7 @@ def maintenance_splash_hook(router, environ, _start_response):  # pylint: disabl
         return None
     # Call authorize RPC
     auth_data = Holder()
+    auth_status = None
     #
     try:
         auth_status = context.rpc_manager.timeout(15).auth_authorize(source, headers, cookies)
@@ -78,7 +89,12 @@ def maintenance_splash_hook(router, environ, _start_response):  # pylint: disabl
                 auth_data.id = int(auth_data.id)
             except:  # pylint: disable=W0702
                 auth_data.id = "-"
-        else:  # Note: may handle other cases (like 'redirect') later
+        else:
+            # Unauthenticated: honor redirect so browsers can reach the login flow.
+            # Without this, admins hit 503 before ever loading the login page.
+            if auth_status.get("action") == "redirect" and auth_status.get("target"):
+                return _make_redirect_app(auth_status["target"])
+            #
             auth_data.type = "public"
             auth_data.id = "-"
             auth_data.reference = "-"
@@ -96,8 +112,53 @@ def maintenance_splash_hook(router, environ, _start_response):  # pylint: disabl
         #
         if "admin" in user_roles or "super_admin" in user_roles:
             return None
+        # Logged-in non-admin: block with splash.
+        return maintenance_splash_app
+    #
+    # Anonymous visitor (no cookie, or session resolved to public via a
+    # public rule). Redirect to the login page so admins can sign in.
+    login_url = _resolve_login_url(source, headers)
+    if login_url is not None:
+        return _make_redirect_app(login_url)
     #
     return maintenance_splash_app
+
+
+def _resolve_login_url(source, headers):
+    """ Ask auth_authorize for the login redirect URL by pretending the
+    request is for a non-public URI. Strip target_to so post-login the
+    user lands on the auth provider's default (usually "/"). """
+    forced_source = dict(source)
+    forced_source["uri"] = f"{context.url_prefix}/__maintenance_login__"
+    try:
+        forced = context.rpc_manager.timeout(15).auth_authorize(
+            forced_source, dict(headers), {},
+        )
+    except:  # pylint: disable=W0702
+        log.debug("splash: forced auth_authorize failed", exc_info=True)
+        return None
+    #
+    if forced.get("auth_ok"):
+        return None
+    if forced.get("action") != "redirect":
+        return None
+    target = forced.get("target")
+    if not target:
+        return None
+    #
+    parsed = urlsplit(target)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def _make_redirect_app(target):
+    """ WSGI app that issues a 302 to the given location """
+    def _redirect_app(_environ, start_response):
+        start_response("302 Found", [
+            ("Location", target),
+            ("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate"),
+        ])
+        return [b""]
+    return _redirect_app
 
 
 def maintenance_splash_app(_environ, start_response):

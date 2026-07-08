@@ -23,6 +23,7 @@ from pylon.core.tools import log, web, profiling  # pylint: disable=E0611,E0401
 
 from ..tools.logs import LocalListLogHandler
 from ..tools.tasks import wait_for_tasks
+from ..tools.maintenance import enter_maintenance, leave_maintenance
 
 
 class Event:  # pylint: disable=R0903,E1101
@@ -35,7 +36,7 @@ class Event:  # pylint: disable=R0903,E1101
         if not isinstance(payload, dict):
             return
         #
-        if self.context.id != payload.get("pylon_id", ""):
+        if not payload.get("broadcast") and self.context.id != payload.get("pylon_id", ""):
             return
         #
         module_manager = self.context.module_manager
@@ -204,6 +205,14 @@ class Event:  # pylint: disable=R0903,E1101
                             self.context.root_router.hooks.append(maintenance_splash_hook)
                     except:  # pylint: disable=W0702
                         log.exception("Skipping exception")
+                #
+                # Immediately reject new tasks and stop running ones on all
+                # known TaskNodes. Runs regardless of restart flag: the admin
+                # should not wait ~15min for wait_for_tasks to time out.
+                try:
+                    enter_maintenance(self)
+                except:  # pylint: disable=W0702
+                    log.exception("Skipping enter_maintenance exception")
             #
             elif action == "disable_splash":
                 log.info("Disabling maintenance splash")
@@ -222,6 +231,12 @@ class Event:  # pylint: disable=R0903,E1101
                             self.context.root_router.hooks.remove(maintenance_splash_hook)
                     except:  # pylint: disable=W0702
                         log.exception("Skipping exception")
+                #
+                # Restore approvers so new tasks are accepted again.
+                try:
+                    leave_maintenance(self)
+                except:  # pylint: disable=W0702
+                    log.exception("Skipping leave_maintenance exception")
             #
             elif action == "delete_requirements":
                 for plugin in data:
