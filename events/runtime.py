@@ -23,7 +23,7 @@ from pylon.core.tools import log, web, profiling  # pylint: disable=E0611,E0401
 
 from ..tools.logs import LocalListLogHandler
 from ..tools.tasks import wait_for_tasks
-from ..tools.maintenance import enter_maintenance, leave_maintenance
+from ..tools.maintenance import enter_maintenance, leave_maintenance, pause_tasks, resume_tasks
 
 
 class Event:  # pylint: disable=R0903,E1101
@@ -232,11 +232,44 @@ class Event:  # pylint: disable=R0903,E1101
                     except:  # pylint: disable=W0702
                         log.exception("Skipping exception")
                 #
-                # Restore approvers so new tasks are accepted again.
+                # Restore approvers only if the independent pause-tasks
+                # toggle isn't also holding them rejected.
+                if not self.descriptor.state.get("tasks_paused", False):
+                    try:
+                        leave_maintenance(self)
+                    except:  # pylint: disable=W0702
+                        log.exception("Skipping leave_maintenance exception")
+            #
+            elif action == "pause_tasks":
+                log.info("Pausing new task dispatch")
+                #
                 try:
-                    leave_maintenance(self)
+                    self.descriptor.state["tasks_paused"] = True
+                    self.descriptor.save_state()
                 except:  # pylint: disable=W0702
-                    log.exception("Skipping leave_maintenance exception")
+                    log.exception("Skipping state exception")
+                #
+                try:
+                    pause_tasks(self)
+                except:  # pylint: disable=W0702
+                    log.exception("Skipping pause_tasks exception")
+            #
+            elif action == "resume_tasks":
+                log.info("Resuming new task dispatch")
+                #
+                try:
+                    self.descriptor.state["tasks_paused"] = False
+                    self.descriptor.save_state()
+                except:  # pylint: disable=W0702
+                    log.exception("Skipping state exception")
+                #
+                # Restore approvers only if splash isn't also holding them
+                # rejected.
+                if not self.descriptor.state.get("splash_enabled", False):
+                    try:
+                        resume_tasks(self)
+                    except:  # pylint: disable=W0702
+                        log.exception("Skipping resume_tasks exception")
             #
             elif action == "delete_requirements":
                 for plugin in data:
