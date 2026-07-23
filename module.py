@@ -275,9 +275,10 @@ class Module(module.ModuleModel):  # pylint: disable=R0902
         self.repo_resolver.init()
 
     def ready(self):
-        """ Ready callback: re-arm task-approvers if splash is on. """
-        if self.descriptor.state.get("splash_enabled", False):
-            log.info("Maintenance splash is on at startup — re-arming task approvers")
+        """ Ready callback: re-arm task-approvers if splash or task-pause is on. """
+        if self.descriptor.state.get("splash_enabled", False) or \
+                self.descriptor.state.get("tasks_paused", False):
+            log.info("Maintenance/task-pause is on at startup — re-arming task approvers")
             try:
                 set_task_approvers(self, reject_approver)
             except:  # pylint: disable=W0702
@@ -288,6 +289,10 @@ class Module(module.ModuleModel):  # pylint: disable=R0902
             `this.for_module('bootstrap').module.is_maintenance_active()`
         """
         return _is_maintenance_active(self.context.module_manager)
+
+    def is_tasks_paused(self):
+        """ Public helper: is the independent "pause new tasks" toggle on? """
+        return bool(self.descriptor.state.get("tasks_paused", False))
 
     def unready(self):
         """ Un-ready callback """

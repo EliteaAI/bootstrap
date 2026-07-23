@@ -202,13 +202,30 @@ def leave_maintenance(self):
         log.exception("Failed to restore approvers")
 
 
+def pause_tasks(self):
+    """ Reject new tasks only; running tasks are left to finish on their own. """
+    log.info("Task pause: rejecting new tasks, leaving running tasks alone")
+    try:
+        set_task_approvers(self, reject_approver)
+    except:  # pylint: disable=W0702
+        log.exception("Failed to set reject approvers")
+
+
+def resume_tasks(self):
+    """ Restore approvers so new tasks are accepted again. """
+    log.info("Task pause: restoring task approvers")
+    try:
+        set_task_approvers(self, None)
+    except:  # pylint: disable=W0702
+        log.exception("Failed to restore approvers")
+
+
 def is_maintenance_active(module_manager):
-    """ Cheap check for other plugins: is maintenance splash on? """
+    """ Cheap check for other plugins: is maintenance splash or task-pause on? """
     try:
         if "bootstrap" in module_manager.descriptors:
-            return bool(
-                module_manager.descriptors["bootstrap"].state.get("splash_enabled", False)
-            )
+            state = module_manager.descriptors["bootstrap"].state
+            return bool(state.get("splash_enabled", False) or state.get("tasks_paused", False))
     except:  # pylint: disable=W0702
         pass
     return False
