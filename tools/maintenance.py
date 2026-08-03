@@ -26,10 +26,17 @@ def reject_approver(*_args, **_kwargs):
     return False
 
 
+# admin.task_node is the shared, always operator-triggered System -> Tasks
+# node (fed by admin + several other plugins via register_admin_task()).
+MAINTENANCE_EXEMPT_PLUGINS = frozenset({"admin"})
+
+
 def _iter_queue_nodes(module_manager):
     """ Yield (label, task_node, queue_or_none, task_names) for each queue-backed node. """
     for plugin_name, plugin_target in TASK_TARGETS.items():
         if plugin_name not in module_manager.modules:
+            continue
+        if plugin_name in MAINTENANCE_EXEMPT_PLUGINS:
             continue
         #
         descriptor = module_manager.modules[plugin_name]
@@ -57,6 +64,8 @@ def _iter_standalone_nodes(module_manager):
     """ Yield (label, task_node) for each standalone TaskNode. """
     for plugin_name, plugin_target in TASK_TARGETS.items():
         if plugin_name not in module_manager.modules:
+            continue
+        if plugin_name in MAINTENANCE_EXEMPT_PLUGINS:
             continue
         #
         descriptor = module_manager.modules[plugin_name]
