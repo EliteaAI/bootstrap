@@ -72,6 +72,10 @@ TASK_TARGETS = {
         "queues": [],
         "nodes": [
             "task_node",
+            # Serves the local "eval_runs" pool. A run executes case by case for as long as its
+            # dataset takes, so draining it is what stops a deploy orphaning a run mid-case
+            # (bounded by task_wait_timeout, after which the eval_run_reap cron fails the row).
+            "eval_task_node",
         ],
     },
     "worker_client": {
