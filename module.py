@@ -387,22 +387,38 @@ class Module(module.ModuleModel):  # pylint: disable=R0902
                 response = requests.get(
                     f"https://api.github.com/repos/{release_owner}/{release_repo}/releases",
                     headers=headers,
+                    params={"per_page": 100},
                 )
                 response.raise_for_status()
                 releases = response.json()
                 #
-                for release_info in releases:
-                    if release_info["name"] == release:
-                        headers["Accept"] = "application/octet-stream"
-                        #
-                        session = requests.Session()
-                        session.headers.update(headers)
-                        #
-                        target_url = release_info["assets"][0]["url"]
-                        break
+                release_info = next((item for item in releases if item["name"] == release), None)
+                if release_info is None:
+                    raise RuntimeError(
+                        f"Release not found in {release_owner}/{release_repo}: {release}"
+                    )
+                #
+                asset = next(
+                    (item for item in release_info["assets"] if item["name"] == name), None
+                )
+                if asset is None:
+                    raise RuntimeError(
+                        f"Bundle asset not found in {release_owner}/{release_repo} release {release}: {name}"  # pylint: disable=C0301
+                    )
+                #
+                headers["Accept"] = "application/octet-stream"
+                #
+                session = requests.Session()
+                session.headers.update(headers)
+                #
+                target_url = asset["url"]
+                log.info("Bundle resolved: %s -> %s (%s)", name, asset["name"], target_url)
+            #
+            else:
+                raise RuntimeError(f"RepoResolver type is not supported: {resolver_type}")
         #
         if session is None:
-            raise RuntimeError("RepoResolver is not for supported depot")
+            raise RuntimeError("RepoResolver is not configured")
         #
         install_needed_callback = kwargs.get("install_needed", None)
         update_needed_callback = kwargs.get("update_needed", None)
