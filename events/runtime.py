@@ -22,6 +22,7 @@ import logging
 from pylon.core.tools import log, web, profiling  # pylint: disable=E0611,E0401
 
 from ..tools.logs import LocalListLogHandler
+from ..tools.plugins import install_plugin, updates as plugin_updates
 from ..tools.tasks import wait_for_tasks
 from ..tools.maintenance import enter_maintenance, leave_maintenance, pause_tasks, resume_tasks
 
@@ -42,7 +43,6 @@ class Event:  # pylint: disable=R0903,E1101
         module_manager = self.context.module_manager
         plugins_provider = module_manager.providers["plugins"]
         requirements_provider = module_manager.providers["requirements"]
-        repo_resolver = self.repo_resolver
         #
         pycache_path = self.context.settings.get(
             "modules", {}
@@ -65,65 +65,46 @@ class Event:  # pylint: disable=R0903,E1101
                 except:  # pylint: disable=W0702
                     pass
         #
-        for plugin in payload.get("plugins", []):
-            if plugin.startswith("!"):
-                plugin = plugin.lstrip("!")
-                log.info("Deleting plugin: %s", plugin)
-                #
-                if plugins_provider.plugin_exists(plugin):
-                    plugins_provider.delete_plugin(plugin)
-                #
-                requirements_provider.delete_requirements(plugin)
-                #
-                _delete_pycache()
-                #
-                try:
-                    from pylon.core.tools.module import state  # pylint: disable=E0611,E0401,C0415
+        # Restart waits on this counter, so hold it for the whole plugin loop
+        with plugin_updates:
+            for plugin in payload.get("plugins", []):
+                if plugin.startswith("!"):
+                    plugin = plugin.lstrip("!")
+                    log.info("Deleting plugin: %s", plugin)
                     #
-                    plugin_state = state.get(plugin)
-                    plugin_state["installed"] = False
-                    state.set(plugin, plugin_state)
-                except:  # pylint: disable=W0702
-                    pass
-            else:
-                if plugins_provider.plugin_exists(plugin):
-                    log.info("Updating plugin: %s", plugin)
+                    if plugins_provider.plugin_exists(plugin):
+                        plugins_provider.delete_plugin(plugin)
+                    #
+                    requirements_provider.delete_requirements(plugin)
+                    #
+                    _delete_pycache()
+                    #
+                    try:
+                        from pylon.core.tools.module import state  # pylint: disable=E0611,E0401,C0415
+                        #
+                        plugin_state = state.get(plugin)
+                        plugin_state["installed"] = False
+                        state.set(plugin, plugin_state)
+                    except:  # pylint: disable=W0702
+                        pass
                 else:
-                    log.info("Installing plugin: %s", plugin)
-                #
-                plugin_info = repo_resolver.resolve(plugin)
-                #
-                if plugin_info is None:
-                    log.error("Plugin is not known by repo resolver(s)")
-                    continue
-                #
-                metadata_provider = repo_resolver.get_metadata_provider(plugin)
-                #
-                metadata_url = plugin_info["objects"]["metadata"]
-                metadata = metadata_provider.get_metadata({"source": metadata_url})
-                #
-                source_target = plugin_info["source"].copy()
-                source_type = source_target.pop("type")
-                #
-                if source_type not in ["git", "http_tar", "http_zip"]:
-                    log.error("Plugin source type is not supported: %s", source_type)
-                    continue
-                #
-                source_provider = repo_resolver.get_source_provider(plugin)
-                source = source_provider.get_source(source_target)
-                #
-                plugins_provider.add_plugin(plugin, source)
-                #
-                try:
-                    from pylon.core.tools.module import state  # pylint: disable=E0611,E0401,C0415
+                    force = bool(payload.get("force", False))
                     #
-                    plugin_state = state.get(plugin)
-                    plugin_state["installed"] = False
-                    state.set(plugin, plugin_state)
-                except:  # pylint: disable=W0702
-                    pass
-                #
-                log.info("Plugin updated to version %s", metadata.get("version", "0.0.0"))
+                    try:
+                        status = install_plugin(self, plugin, force=force)
+                    except:  # pylint: disable=W0702
+                        log.exception("%s: plugin update failed, current version kept", plugin)
+                        continue
+                    #
+                    if status in ["installed", "updated"]:
+                        try:
+                            from pylon.core.tools.module import state  # pylint: disable=E0611,E0401,C0415
+                            #
+                            plugin_state = state.get(plugin)
+                            plugin_state["installed"] = False
+                            state.set(plugin, plugin_state)
+                        except:  # pylint: disable=W0702
+                            pass
         #
         for plugin, config in payload.get("configs", {}).items():
             log.info("Updating config: %s", plugin)
@@ -303,6 +284,8 @@ class Event:  # pylint: disable=R0903,E1101
             log.info("All reloads done")
         #
         if payload.get("restart", True):
+            plugin_updates.wait_idle(self.descriptor.config.get("restart_update_wait_timeout", 300))
+            #
             try:
                 wait_for_tasks(self)
             except:  # pylint: disable=W0702
