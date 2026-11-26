@@ -316,7 +316,7 @@ def _version_key(version):
         return (0, version)
 
 
-def repair_site_packages(site_packages, skip=()):
+def repair_site_packages(site_packages, skip=(), still_broken=None):
     """ Drop broken and duplicate dist-info; returns (name, reason, needs_reinstall) """
     fixes = []
     dist_infos = sorted(glob.glob(os.path.join(site_packages, "*.dist-info")))
@@ -339,6 +339,8 @@ def repair_site_packages(site_packages, skip=()):
         missing = _is_broken(site_packages, dist_info) if os.path.isdir(dist_info) else None
         if missing and os.path.basename(dist_info) in skip:
             log.error("%s still broken after a reinstall (%s missing), not repairing again", os.path.basename(dist_info), missing)  # pylint: disable=C0301
+            if still_broken is not None:
+                still_broken.append(os.path.basename(dist_info))
             continue
         if missing:
             shutil.rmtree(dist_info, ignore_errors=True)
@@ -359,16 +361,18 @@ def repair_requirements(requirements_path, plugins):
             repaired_before = set()
         reinstall = False
         repaired_now = []
+        still_broken = []
         for site_packages in glob.glob(pattern):
-            for name, reason, needs_reinstall in repair_site_packages(site_packages, skip=repaired_before):
+            for name, reason, needs_reinstall in repair_site_packages(site_packages, repaired_before, still_broken):
                 log.warning("%s requirements: %s: %s", plugin, name, reason)
                 reinstall = reinstall or needs_reinstall
                 if needs_reinstall:
                     repaired_now.append(name)
-        # Repairing the same dist-info on consecutive boots would loop: stop after one try
-        if repaired_now:
+        # Keep skipped names in the guard too, or it would clear itself and repair again next boot
+        guarded = repaired_now + still_broken
+        if guarded:
             with open(guard_path, "w", encoding="utf-8") as file:
-                file.write("\n".join(repaired_now))
+                file.write("\n".join(guarded))
         elif os.path.exists(guard_path):
             os.remove(guard_path)
         # Pylon skips pip while the cached requirements hash matches

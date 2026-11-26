@@ -346,23 +346,23 @@ def test_repair_removes_orphan_dist_info_and_cache_meta(plugins_mod, tmp_path):
 
 
 def test_repair_does_not_loop_on_the_same_dist_info(plugins_mod, tmp_path):
-    # e.g. files pruned after every install: repair once, then stop deleting
+    # Files pruned after every install: repair once, then stop for good (not every other boot)
     req = tmp_path / "requirements"
     site = req / "p" / "lib" / "python3.12" / "site-packages"
+    cache_removed = 0
 
-    def broken():
-        make_dist(site, "pkg", "1.0", ["pkg/__init__.py"], write_files=False)
+    for boot in range(4):
+        if not (site / "pkg-1.0.dist-info").exists():
+            make_dist(site, "pkg", "1.0", ["pkg/__init__.py"], write_files=False)  # pip reinstall, files pruned again
         (req / "p.json").write_text("{}")
+        plugins_mod.repair_requirements(str(req), ["p"])
+        if not (req / "p.json").exists():
+            cache_removed += 1
 
-    broken()
-    plugins_mod.repair_requirements(str(req), ["p"])
-    assert not (site / "pkg-1.0.dist-info").exists() and not (req / "p.json").exists()
+    assert cache_removed == 1
+    assert (req / "p.repaired").read_text().split() == ["pkg-1.0.dist-info"]
 
-    broken()  # same breakage on the next boot
-    plugins_mod.repair_requirements(str(req), ["p"])
-    assert (site / "pkg-1.0.dist-info").exists() and (req / "p.json").exists()
-
-    # Guard clears once nothing is broken
+    # Guard clears once the package is healthy again
     (site / "pkg").mkdir()
     (site / "pkg" / "__init__.py").write_text("x")
     plugins_mod.repair_requirements(str(req), ["p"])
