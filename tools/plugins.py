@@ -78,6 +78,15 @@ def is_intact(path):
         return False
 
 
+def installed_metadata(path):
+    """ Parsed metadata.json of a plugin dir, or None """
+    try:
+        with open(os.path.join(path, METADATA_FILE), "rb") as file:
+            return json.load(file)
+    except:  # pylint: disable=W0702
+        return None
+
+
 def installed_head(plugins_path, plugin):
     """ git_head recorded in the installed plugin metadata """
     try:
@@ -166,6 +175,7 @@ def swap_in(plugins_path, plugin, source, preserve_paths):
         shutil.rmtree(new_path, ignore_errors=True)
         raise RuntimeError(f"{plugin}: new version has no valid {METADATA_FILE}, keeping current")
     #
+    old_version = (installed_metadata(target) or {}).get("version", "")
     for rel_path in preserve_paths:
         src = os.path.join(target, rel_path)
         if os.path.isdir(src):
@@ -174,6 +184,11 @@ def swap_in(plugins_path, plugin, source, preserve_paths):
                 src, os.path.join(new_path, rel_path), symlinks=True, dirs_exist_ok=True,
                 copy_function=_copy_missing,
             )
+            # Tag carried-over files so the plugin sees they belong to the previous version
+            marker = os.path.join(new_path, rel_path, ".installed_for")
+            if not os.path.exists(marker):
+                with open(marker, "w", encoding="utf-8") as file:
+                    file.write(f"carried over from {old_version or 'unknown'}")
     #
     if os.path.exists(target):
         os.rename(target, old_path)
@@ -301,7 +316,7 @@ def _version_key(version):
         return (0, version)
 
 
-def repair_site_packages(site_packages):
+def repair_site_packages(site_packages, skip=()):
     """ Drop broken and duplicate dist-info; returns (name, reason, needs_reinstall) """
     fixes = []
     dist_infos = sorted(glob.glob(os.path.join(site_packages, "*.dist-info")))
@@ -322,6 +337,9 @@ def repair_site_packages(site_packages):
     #
     for dist_info in dist_infos:
         missing = _is_broken(site_packages, dist_info) if os.path.isdir(dist_info) else None
+        if missing and os.path.basename(dist_info) in skip:
+            log.error("%s still broken after a reinstall (%s missing), not repairing again", os.path.basename(dist_info), missing)  # pylint: disable=C0301
+            continue
         if missing:
             shutil.rmtree(dist_info, ignore_errors=True)
             fixes.append((os.path.basename(dist_info), f"{missing} missing, will reinstall", True))
@@ -333,11 +351,26 @@ def repair_requirements(requirements_path, plugins):
     """ Repair site-packages of the given plugins before pip runs """
     for plugin in plugins:
         pattern = os.path.join(requirements_path, plugin, "lib", "python*", "site-packages")
+        guard_path = os.path.join(requirements_path, f"{plugin}.repaired")
+        try:
+            with open(guard_path, encoding="utf-8") as file:
+                repaired_before = set(file.read().split())
+        except:  # pylint: disable=W0702
+            repaired_before = set()
         reinstall = False
+        repaired_now = []
         for site_packages in glob.glob(pattern):
-            for name, reason, needs_reinstall in repair_site_packages(site_packages):
+            for name, reason, needs_reinstall in repair_site_packages(site_packages, skip=repaired_before):
                 log.warning("%s requirements: %s: %s", plugin, name, reason)
                 reinstall = reinstall or needs_reinstall
+                if needs_reinstall:
+                    repaired_now.append(name)
+        # Repairing the same dist-info on consecutive boots would loop: stop after one try
+        if repaired_now:
+            with open(guard_path, "w", encoding="utf-8") as file:
+                file.write("\n".join(repaired_now))
+        elif os.path.exists(guard_path):
+            os.remove(guard_path)
         # Pylon skips pip while the cached requirements hash matches
         cache_meta = os.path.join(requirements_path, f"{plugin}.json")
         if reinstall and os.path.exists(cache_meta):

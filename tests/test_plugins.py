@@ -41,6 +41,23 @@ def test_swap_replaces_and_preserves_ui(plugins_mod, tmp_path):
     assert sorted(os.listdir(plugins)) == ["core"]
 
 
+def test_carried_over_ui_is_tagged_with_old_version(plugins_mod, tmp_path):
+    # Existing installs have no marker: tag the UI with the version it belongs to
+    plugins = tmp_path / "plugins"
+    write_plugin(str(plugins / "core"), "1.0", extra={"static/ui/dist/index.html": "ui"})
+    src = tmp_path / "src"
+    write_plugin(str(src), "2.0")
+
+    plugins_mod.swap_in(str(plugins), "core", str(src), ["static/ui/dist"])
+    assert (plugins / "core/static/ui/dist/.installed_for").read_text() == "carried over from 1.0"
+
+    # An existing marker is carried over unchanged
+    src2 = tmp_path / "src2"
+    write_plugin(str(src2), "3.0")
+    plugins_mod.swap_in(str(plugins), "core", str(src2), ["static/ui/dist"])
+    assert (plugins / "core/static/ui/dist/.installed_for").read_text() == "carried over from 1.0"
+
+
 def test_swap_rejects_source_without_metadata(plugins_mod, tmp_path):
     plugins = tmp_path / "plugins"
     write_plugin(str(plugins / "core"), "1.0")
@@ -326,6 +343,30 @@ def test_repair_removes_orphan_dist_info_and_cache_meta(plugins_mod, tmp_path):
     assert good.exists() and not orphan.exists()
     # Cache hash dropped so pylon actually re-runs pip
     assert not (req / "elitea_core.json").exists()
+
+
+def test_repair_does_not_loop_on_the_same_dist_info(plugins_mod, tmp_path):
+    # e.g. files pruned after every install: repair once, then stop deleting
+    req = tmp_path / "requirements"
+    site = req / "p" / "lib" / "python3.12" / "site-packages"
+
+    def broken():
+        make_dist(site, "pkg", "1.0", ["pkg/__init__.py"], write_files=False)
+        (req / "p.json").write_text("{}")
+
+    broken()
+    plugins_mod.repair_requirements(str(req), ["p"])
+    assert not (site / "pkg-1.0.dist-info").exists() and not (req / "p.json").exists()
+
+    broken()  # same breakage on the next boot
+    plugins_mod.repair_requirements(str(req), ["p"])
+    assert (site / "pkg-1.0.dist-info").exists() and (req / "p.json").exists()
+
+    # Guard clears once nothing is broken
+    (site / "pkg").mkdir()
+    (site / "pkg" / "__init__.py").write_text("x")
+    plugins_mod.repair_requirements(str(req), ["p"])
+    assert not (req / "p.repaired").exists()
 
 
 def test_repair_drops_stale_duplicate(plugins_mod, tmp_path):
