@@ -45,6 +45,7 @@ from .tools.maintenance import (
     reject_approver,
 )
 from .tools import mesh
+from .tools.plugins import ensure_plugin, recover_all, repair_requirements
 
 
 class Module(module.ModuleModel):  # pylint: disable=R0902
@@ -70,52 +71,7 @@ class Module(module.ModuleModel):  # pylint: disable=R0902
         self.repo_resolver = self._make_resolver()
         self.repo_resolver.init()
         #
-        plugins_to_check = [
-            *self.descriptor.config.get("local_preordered_plugins", []),
-            *self.descriptor.config.get("customer_preordered_plugins", []),
-            *self.descriptor.config.get("preordered_plugins", [])
-        ]
-        #
-        known_plugins = set(plugins_to_check)
-        plugins_provider = self.context.module_manager.providers["plugins"]
-        #
-        while plugins_to_check:
-            plugin = plugins_to_check.pop(0)
-            log.info("Preloading plugin: %s", plugin)
-            #
-            if plugins_provider.plugin_exists(plugin):
-                log.info("Plugin %s already exists", plugin)
-                #
-                metadata = plugins_provider.get_plugin_metadata(plugin)
-            else:
-                plugin_info = self.repo_resolver.resolve(plugin)
-                if plugin_info is None:
-                    log.error("Plugin %s is not known", plugin)
-                    continue
-                #
-                metadata_provider = self.repo_resolver.get_metadata_provider(plugin)
-                #
-                metadata_url = plugin_info["objects"]["metadata"]
-                metadata = metadata_provider.get_metadata({"source": metadata_url})
-                #
-                source_target = plugin_info["source"].copy()
-                source_type = source_target.pop("type")
-                #
-                if source_type not in  ["git", "http_tar", "http_zip"]:
-                    log.error("Plugin %s source type %s is not supported", plugin, source_type)
-                    continue
-                #
-                source_provider = self.repo_resolver.get_source_provider(plugin)
-                #
-                source = source_provider.get_source(source_target)
-                plugins_provider.add_plugin(plugin, source)
-            #
-            for dependency in metadata.get("depends_on", []):
-                if dependency in known_plugins:
-                    continue
-                #
-                known_plugins.add(dependency)
-                plugins_to_check.append(dependency)
+        self._ensure_plugins()
 
     def init(self):  # pylint: disable=R0914
         """ Init module """
@@ -152,52 +108,7 @@ class Module(module.ModuleModel):  # pylint: disable=R0902
         self.repo_resolver = self._make_resolver()
         self.repo_resolver.init()
         #
-        plugins_to_check = [
-            *self.descriptor.config.get("local_preordered_plugins", []),
-            *self.descriptor.config.get("customer_preordered_plugins", []),
-            *self.descriptor.config.get("preordered_plugins", [])
-        ]
-        #
-        known_plugins = set(plugins_to_check)
-        plugins_provider = self.context.module_manager.providers["plugins"]
-        #
-        while plugins_to_check:
-            plugin = plugins_to_check.pop(0)
-            log.info("Preloading plugin: %s", plugin)
-            #
-            if plugins_provider.plugin_exists(plugin):
-                log.info("Plugin %s already exists", plugin)
-                #
-                metadata = plugins_provider.get_plugin_metadata(plugin)
-            else:
-                plugin_info = self.repo_resolver.resolve(plugin)
-                if plugin_info is None:
-                    log.error("Plugin %s is not known", plugin)
-                    continue
-                #
-                metadata_provider = self.repo_resolver.get_metadata_provider(plugin)
-                #
-                metadata_url = plugin_info["objects"]["metadata"]
-                metadata = metadata_provider.get_metadata({"source": metadata_url})
-                #
-                source_target = plugin_info["source"].copy()
-                source_type = source_target.pop("type")
-                #
-                if source_type not in  ["git", "http_tar", "http_zip"]:
-                    log.error("Plugin %s source type %s is not supported", plugin, source_type)
-                    continue
-                #
-                source_provider = self.repo_resolver.get_source_provider(plugin)
-                #
-                source = source_provider.get_source(source_target)
-                plugins_provider.add_plugin(plugin, source)
-            #
-            for dependency in metadata.get("depends_on", []):
-                if dependency in known_plugins:
-                    continue
-                #
-                known_plugins.add(dependency)
-                plugins_to_check.append(dependency)
+        self._ensure_plugins()
         #
         self.descriptor.init_events()
         #
@@ -221,6 +132,52 @@ class Module(module.ModuleModel):  # pylint: disable=R0902
                     mute_first_failed_connections=5,
                     connection_retry_interval=5.0,
                 )
+
+    def _ensure_plugins(self):
+        """ Install missing plugins, repair broken ones and their requirements """
+        plugins_to_check = [
+            *self.descriptor.config.get("local_preordered_plugins", []),
+            *self.descriptor.config.get("customer_preordered_plugins", []),
+            *self.descriptor.config.get("preordered_plugins", [])
+        ]
+        #
+        known_plugins = set(plugins_to_check)
+        plugins_provider = self.context.module_manager.providers["plugins"]
+        #
+        plugins_path = getattr(plugins_provider, "path", None)
+        if plugins_path is not None:
+            try:
+                recover_all(plugins_path)
+            except:  # pylint: disable=W0702
+                log.exception("Swap recovery failed, continuing")
+        #
+        while plugins_to_check:
+            plugin = plugins_to_check.pop(0)
+            log.info("Preloading plugin: %s", plugin)
+            #
+            try:
+                if ensure_plugin(self, plugin) is None:
+                    continue
+            except:  # pylint: disable=W0702
+                log.exception("Failed to preload plugin: %s", plugin)
+                continue
+            #
+            metadata = plugins_provider.get_plugin_metadata(plugin) or {}
+            for dependency in metadata.get("depends_on", []):
+                if dependency in known_plugins:
+                    continue
+                #
+                known_plugins.add(dependency)
+                plugins_to_check.append(dependency)
+        #
+        requirements_path = getattr(
+            self.context.module_manager.providers.get("requirements", None), "path", None,
+        )
+        if requirements_path is not None:
+            try:
+                repair_requirements(requirements_path, sorted(known_plugins))
+            except:  # pylint: disable=W0702
+                log.exception("Requirements repair failed, continuing")
 
     def _init_mesh(self, mesh_config):
         if "event_node" not in mesh_config:
@@ -400,12 +357,17 @@ class Module(module.ModuleModel):  # pylint: disable=R0902
                     "X-GitHub-Api-Version": "2022-11-28",
                     "Accept": "application/json",
                 }
+                # Same creds as git clone; anonymous API is 60 req/h per IP
+                license_password = config.get("license_password", None)
+                if license_password and not str(license_password).startswith("$"):
+                    headers["Authorization"] = f"Bearer {license_password}"
                 #
-                response = requests.get(
-                    f"https://api.github.com/repos/{release_owner}/{release_repo}/releases",
-                    headers=headers,
-                    params={"per_page": 100},
-                )
+                releases_url = f"https://api.github.com/repos/{release_owner}/{release_repo}/releases"
+                response = requests.get(releases_url, headers=headers, params={"per_page": 100})
+                if response.status_code in [401, 403] and "Authorization" in headers:
+                    log.warning("GitHub rejected license_password for bundles, retrying anonymously")
+                    headers.pop("Authorization")
+                    response = requests.get(releases_url, headers=headers, params={"per_page": 100})
                 response.raise_for_status()
                 releases = response.json()
                 #
